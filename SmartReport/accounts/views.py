@@ -1,17 +1,35 @@
 import logging
-from tokenize import TokenError
+from django.shortcuts import render
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError
 from django.contrib.auth.password_validation import validate_password
 
-from .serializers import RegistrationSerializer, SmartReportLoginSerializer
+from .serializers import RegistrationSerializer, SmartReportLoginSerializer, UserProfileSerializer
 
-def home(request):
-    return render (request, "home.html")
+def register_page(request):
+    return render(request, "register.html")
+
+def login_page(request):
+    return render(request, "login.html")
+
+def profile_page(request):
+    return render(request, "profile.html")
+
+class ProfileAPIView(generics.RetrieveUpdateAPIView):
+    """
+    GET /api/auth/profile/ - Retrieve user profile details
+    PUT /api/auth/profile/ - Update user profile details
+    """
+    serializer_class = UserProfileSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        return self.request.user
 
 logger = logging.getLogger(__name__)
 # Create your views here.

@@ -1,5 +1,4 @@
 from urllib.robotparser import normalize
-
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -18,9 +17,10 @@ class RegistrationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ('username', 'email', 'password', 'password2', 'role')
+        fields = ('username', 'email', 'phone_number', 'password', 'password2', 'role')
         extra_kwargs = {
             'role': {'default': 'citizen'},
+            'phone_number': {'required': False, 'allow_null': True, 'allow_blank': True},
         }
 
     def validate_username(self, value):
@@ -53,6 +53,7 @@ class RegistrationSerializer(serializers.ModelSerializer):
             username=validated_data['username'],
             email=validated_data['email'],
             password=validated_data['password'],
+            phone_number=validated_data.get('phone_number', ''),
             role=validated_data.get('role', 'citizen')
         )
 
@@ -86,3 +87,9 @@ class SmartReportLoginSerializer(TokenObtainPairSerializer):
         data['email']=self.user.email
         data['user_id']=self.user.id
         return data
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ('id', 'username', 'email', 'role', 'phone_number', 'province')
+        read_only_fields = ('id', 'role')
