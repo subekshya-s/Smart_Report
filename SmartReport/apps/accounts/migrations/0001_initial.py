@@ -16,7 +16,7 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.CreateModel(
-            name="User",
+            name="CustomUser",
             fields=[
                 (
                     "id",
@@ -98,15 +98,17 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 (
-                    "role",
-                    models.CharField(
-                        choices=[
-                            ("citizen", "Citizen"),
-                            ("staff", "Staff"),
-                            ("admin", "Admin"),
-                        ],
-                        default="citizen",
-                        max_length=20,
+                    "created_at",
+                    models.DateTimeField(
+                        auto_now_add=True,
+                        default=django.utils.timezone.now,
+                    ),
+                ),
+                (
+                    "updated_at",
+                    models.DateTimeField(
+                        auto_now=True,
+                        default=django.utils.timezone.now,
                     ),
                 ),
                 (

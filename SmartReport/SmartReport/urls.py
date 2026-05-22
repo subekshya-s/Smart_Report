@@ -25,6 +25,8 @@ urlpatterns = [
     path('register/', register_page, name='register_page'),
     path('login/', login_page, name='login_page'),
     path('profile/', profile_page, name='profile_page'),
-    path('api/auth/', include('apps.accounts.urls'))
+    path('api/auth/', include('apps.accounts.urls')),
+    path('api/rbac/',include('apps.roles.urls')),
+    path('api/reports/',include('apps.reports.urls')),
 ]
 

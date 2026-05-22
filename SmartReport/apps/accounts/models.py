@@ -2,19 +2,9 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 
 # Create your models here.
-class User(AbstractUser):
-    """
-     Custom user model for Smart Road Report System - Nepal.
-     Roles:
-       - citizen      : default, public users who submit road reports
-       - staff        : province-level staff who review and resolve reports
-       - (admin/superuser is handled by Django's is_superuser flag)
-     """
-    ROLE_CHOICES = (
-        ('citizen', 'Citizen'),
-        ('staff', 'Staff'),
-        ('admin', 'Admin'),
-    )
+class CustomUser(AbstractUser):
+    """Extended Django user model with RBAC support."""
+
     PROVINCE_CHOICES = (
         ('koshi',         'Koshi Province'),
         ('madhesh',       'Madhesh Province'),
@@ -25,30 +15,20 @@ class User(AbstractUser):
         ('sudurpashchim', 'Sudurpashchim Province'),
     )
 
-
     #actual db column
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='citizen')
     phone_number = models.CharField( max_length=20, blank=True, null=True)
     province = models.CharField( max_length=50, choices=PROVINCE_CHOICES, blank=True, null=True, help_text="Only applicable for citizen and province staff.")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
-    #read only computed property which doesn't touch database
-    @property
-    def effective_role(self):
-        if self.is_superuser:
-            return 'admin'
-        return self.role
+    def get_roles(self):
+        """Get all roles for this user."""
+        from apps.roles.models import Role
+        return Role.objects.filter(
+            userrole__user=self
+        ).distinct()
 
-    #check ps is already hashed, if not hash first via set_password() then call super().save(*args, **kwargs) to prevent double-hashing
-    def save(self, *args, **kwargs):
-        from django.contrib.auth.hashers import is_password_usable
-        if self.password and not is_password_usable(self.password):
-            self.set_password(self.password)
-        super().save(*args, **kwargs)
-    #save function is like receptionist- it does the password check first,
-    #then hands everything off to Django's original save() untouched.or
-    ## a receptionist that accepts any message and forwards it exactly
-
-    def __str__(self):
-        return f"{self.username} ({self.effective_role})"
-
-    
+    def get_permissions(self):
+        """get all distinct permissions for this user."""
+        from apps.roles.services import RBACService
+        return RBACService.get_user_permissions(self)    
