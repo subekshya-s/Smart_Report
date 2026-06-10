@@ -1,3 +1,4 @@
+from django.db import models # NEW
 from django.utils.decorators import method_decorator
 from django.utils import timezone
 from django.contrib.auth import get_user_model
@@ -7,7 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.exceptions import ValidationError
 
-from core.constants import ReportPermissions
+from apps.core.constants import ReportPermissions
 from apps.roles.decorators import require_permission
 from apps.roles.services import RBACService
 from apps.roles.models import AuditLog, UserRole
@@ -17,12 +18,12 @@ from apps.reports.serializers import (
     ReportDetailSerializer,
     ReportCreateSerializer,
     ReportUpdateSerializer,
-    ReportImageSerializer,
     ReportClusterSerializer,
     MapMarkerSerializer,
 )
 from django_filters.rest_framework import DjangoFilterBackend
 from apps.reports.filters import ReportFilter
+from apps.reports.permissions import IsCitizen, IsWardStaff, IsDistrictAdmin, IsNationalAdmin
 
 try:
     from core.pagination import CustomPagination
@@ -58,6 +59,19 @@ class ReportViewSet(BaseResponseMixin, viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_class = ReportFilter
 
+    def get_permissions(self):
+        if self.action == 'create':
+            permission_classes = [IsCitizen | IsWardStaff | IsDistrictAdmin | IsNationalAdmin]
+        elif self.action in ['update', 'partial_update', 'resolve', 'approve', 'reject']:
+            permission_classes = [IsCitizen | IsWardStaff | IsDistrictAdmin | IsNationalAdmin]
+        elif self.action == 'assign':
+            permission_classes = [IsDistrictAdmin | IsNationalAdmin]
+        elif self.action == 'destroy':
+            permission_classes = [IsNationalAdmin]
+        else:
+            permission_classes = [IsCitizen | IsWardStaff | IsDistrictAdmin | IsNationalAdmin]
+        return [permission() for permission in permission_classes]
+
     def get_serializer_class(self):
         if self.action == 'list':
             return ReportListSerializer
@@ -74,23 +88,21 @@ class ReportViewSet(BaseResponseMixin, viewsets.ModelViewSet):
         if not user.is_authenticated:
             return Report.objects.none()
 
-        # Check if user has permission to view all reports across Nepal
-        has_view_all, _ = RBACService.has_permission(user, ReportPermissions.VIEW_ALL)
-        if has_view_all:
+        if user.is_superuser or UserRole.objects.filter(user=user, role__codename='national_admin').exists():
             return Report.objects.all()
-
-        # Check if user has permission to view province reports
-        has_view_province, _ = RBACService.has_permission(user, ReportPermissions.VIEW_PROVINCE)
-        if has_view_province:
-            user_scopes = UserRole.objects.filter(user=user).values_list('scope', flat=True)
-            district_ids = []
-            for scope in user_scopes:
-                if scope.startswith('region_'):
-                    district_ids.append(scope.replace('region_', ''))
-            return Report.objects.filter(region_id__in=district_ids)
-
-        # Citizens / standard users can only view their own
-        return Report.objects.filter(submitted_by=user)
+            
+        user_roles = UserRole.objects.filter(user=user)
+        q_objects = models.Q(submitted_by=user)
+        
+        district_regions = user_roles.filter(role__codename='district_admin').values_list('region', flat=True)
+        if district_regions.exists():
+            q_objects |= models.Q(region_id__in=district_regions)
+            
+        ward_regions = user_roles.filter(role__codename='ward_staff').values_list('region', flat=True)
+        if ward_regions.exists():
+            q_objects |= models.Q(region_id__in=ward_regions) | models.Q(assigned_to=user)
+            
+        return Report.objects.filter(q_objects)
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -103,13 +115,11 @@ class ReportViewSet(BaseResponseMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return self.get_success_response(serializer.data, "List retrieved successfully")
 
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        # Enforce RBAC dynamic check
-        if not RBACService.can_view_report(request.user, instance):
-            return self.get_error_response("Access Denied to this report details.", status.HTTP_403_FORBIDDEN)
-        serializer = self.get_serializer(instance)
-        return self.get_success_response(serializer.data, "Details retrieved successfully")
+    def retrieve(self, request, *args, **kwargs): # CHANGED
+        instance = self.get_object() # CHANGED
+        self.check_object_permissions(request, instance) # CHANGED
+        serializer = self.get_serializer(instance) # CHANGED
+        return self.get_success_response(serializer.data, "Details retrieved successfully") # CHANGED
 
     @method_decorator(require_permission(ReportPermissions.SUBMIT))
     def create(self, request, *args, **kwargs):
@@ -146,11 +156,11 @@ class ReportViewSet(BaseResponseMixin, viewsets.ModelViewSet):
         detail_serializer = ReportDetailSerializer(report)
         return self.get_success_response(detail_serializer.data, "Report created successfully", status.HTTP_201_CREATED)
 
-    @method_decorator(require_permission(ReportPermissions.REVIEW))
+    @method_decorator(require_permission(ReportPermissions.UPDATE_STATUS))
     def update(self, request, *args, **kwargs):
         return self._perform_update(request, *args, **kwargs)
 
-    @method_decorator(require_permission(ReportPermissions.REVIEW))
+    @method_decorator(require_permission(ReportPermissions.UPDATE_STATUS))
     def partial_update(self, request, *args, **kwargs):
         return self._perform_update(request, *args, **kwargs)
 
@@ -257,7 +267,7 @@ class ReportViewSet(BaseResponseMixin, viewsets.ModelViewSet):
         return self.get_success_response(ReportDetailSerializer(report).data, "Report submitted successfully")
 
     @action(detail=True, methods=['post'])
-    @method_decorator(require_permission(ReportPermissions.REVIEW))
+    @method_decorator(require_permission(ReportPermissions.UPDATE_STATUS))
     def approve(self, request, pk=None):
         report = self.get_object()
         old_status = report.status
@@ -282,7 +292,7 @@ class ReportViewSet(BaseResponseMixin, viewsets.ModelViewSet):
         return self.get_success_response(ReportDetailSerializer(report).data, "Report approved successfully")
 
     @action(detail=True, methods=['post'])
-    @method_decorator(require_permission(ReportPermissions.REVIEW))
+    @method_decorator(require_permission(ReportPermissions.UPDATE_STATUS))
     def reject(self, request, pk=None):
         report = self.get_object()
         reason = request.data.get('rejection_reason')
@@ -312,7 +322,7 @@ class ReportViewSet(BaseResponseMixin, viewsets.ModelViewSet):
         return self.get_success_response(ReportDetailSerializer(report).data, "Report rejected successfully")
 
     @action(detail=True, methods=['post'])
-    @method_decorator(require_permission(ReportPermissions.REVIEW))
+    @method_decorator(require_permission(ReportPermissions.ASSIGN))
     def assign(self, request, pk=None):
         report = self.get_object()
         user_id = request.data.get('assigned_to')
@@ -339,7 +349,7 @@ class ReportViewSet(BaseResponseMixin, viewsets.ModelViewSet):
         return self.get_success_response(ReportDetailSerializer(report).data, "Report assigned successfully")
 
     @action(detail=True, methods=['post'])
-    @method_decorator(require_permission(ReportPermissions.CLOSE))
+    @method_decorator(require_permission(ReportPermissions.VERIFY_RESOLVED))
     def resolve(self, request, pk=None):
         report = self.get_object()
         old_status = report.status
